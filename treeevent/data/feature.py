@@ -1,4 +1,5 @@
 import os
+import logging
 
 import numpy as np
 import pandas as pd
@@ -16,13 +17,17 @@ from treeevent.data.elevation import get_elevations
 from treeevent.utils.dataframe import save_dataframe_to_csv
 
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 def get_coords(file_path, geojson_folder):
     if os.path.exists(file_path):
-        print(f"[INFO] File found: {file_path}. Loading the CSV file.")
+        logger.info(f"File found: {file_path}. Loading the CSV file.")
         df = pd.read_csv(file_path)
 
     else:
-        print(f"[INFO] File not found: {file_path}. Generating new data.")
+        logger.info(f"File not found: {file_path}. Generating new data.")
         df = process_geojson_folder(geojson_folder)
         save_dataframe_to_csv(df, file_path)
 
@@ -31,10 +36,10 @@ def get_coords(file_path, geojson_folder):
 
 def get_feature(file_path, tiff_folder, geojson_folder, coords=None, type="area"):
     if os.path.exists(file_path):
-        print(f"[INFO] File found: {file_path}. Loading the CSV file.")
+        logger.info(f"File found: {file_path}. Loading the CSV file.")
         df = pd.read_csv(file_path)
     else:
-        print(f"[INFO] File not found: {file_path}. Generating new data.")
+        logger.info(f"File not found: {file_path}. Generating new data.")
 
         if type == "area":
             df = process_geojson_folder(geojson_folder)
@@ -178,8 +183,15 @@ def calculate_climate_stats(X):
     for i in range(len(days_in_month)):
         X[f'temp_range_month_{i+1}'] = X[f'Tmax_avg_month_{i+1}'] - X[f'Tmin_avg_month_{i+1}']
 
+
+    new_columns = {}
     for i in range(len(days_in_month)):
-        X[f'temp_precip_interaction_month_{i+1}'] = X[f'Tmax_avg_month_{i+1}'] * X[f'Prcp_month_{i+1}']
+        new_columns[f'temp_precip_interaction_month_{i+1}'] = (
+            X[f'Tmax_avg_month_{i+1}'] * X[f'Prcp_month_{i+1}']
+        )
+
+    new_columns_df = pd.DataFrame(new_columns)
+    X = pd.concat([X, new_columns_df], axis=1)
 
     return X
 
@@ -280,4 +292,11 @@ def transform_features(X, categorical_features, numeric_features):
             ("cat", categorical_transformer, categorical_features),
         ]
     )
-    return preprocessor.fit_transform(X)
+
+    X_transformed = preprocessor.fit_transform(X)
+
+    numeric_columns = numeric_features
+    categorical_columns = preprocessor.named_transformers_['cat'].get_feature_names_out(categorical_features)
+
+    X_transformed = pd.DataFrame(X_transformed, columns=list(numeric_columns)+list(categorical_columns), index=X.index)
+    return X_transformed

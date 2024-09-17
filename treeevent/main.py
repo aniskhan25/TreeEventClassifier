@@ -7,10 +7,10 @@ import numpy as np
 import pandas as pd
 import torch.nn as nn
 
-from torch_geometric.data import DataLoader
+from torch_geometric.loader import DataLoader
 from sklearn.utils.class_weight import compute_class_weight
 
-from treeevent.utils.graph import create_graph
+from treeevent.utils.graph import create_graph, create_radius_graph, create_hybrid_graph
 from treeevent.utils.hexmask import get_masks
 from treeevent.data.feature import (
     get_coords,
@@ -46,7 +46,7 @@ def train_with_early_stopping(
 
     for epoch in range(epochs):
         train_loss = train(train_loader, model, optimizer, criterion)
-        val_loss, val_accuracy, val_precision, val_recall, val_f1 = evaluate(val_loader, model, criterion, threshold=0.4)
+        val_loss, val_accuracy, val_balanced_accuracy, val_precision, val_recall, val_f1 = evaluate(val_loader, model, criterion, threshold=0.5)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -60,24 +60,31 @@ def train_with_early_stopping(
             logger.info(f"Early stopping triggered after {epoch + 1} epochs.")
             break
 
-        logger.info(f"Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}")
+        logger.info(f"Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        logger.info(f"Val Accuracy: {val_accuracy:.4f}, Val Balanced Accuracy: {val_balanced_accuracy:.4f}")
         logger.info(f"Precision: {val_precision:.4f}, Recall: {val_recall:.4f}, F1-Score: {val_f1:.4f}")
         scheduler.step()
 
 
-def run(df: pd.DataFrame, coords: pd.DataFrame, patience: int = 10) -> None:
+def run(df: pd.DataFrame, coords: pd.DataFrame, feature_weights: list = None, patience: int = 10) -> None:
     train_mask, val_mask, test_mask = get_masks(coords)
-
+    
     train_data, val_data, test_data = df[train_mask], df[val_mask], df[test_mask]
+    train_coords, val_coords, test_coords = coords[train_mask], coords[val_mask], coords[test_mask]
 
-    train_graph = create_graph(train_data)
-    val_graph = create_graph(val_data)
-    test_graph = create_graph(test_data)
+    train_graph = create_radius_graph(train_data)
+    val_graph = create_radius_graph(val_data)
+    test_graph = create_radius_graph(test_data)
+    '''
+    train_graph = create_hybrid_graph(train_data, train_coords, feature_weights=feature_weights)
+    val_graph = create_hybrid_graph(val_data, val_coords, feature_weights=feature_weights)
+    test_graph = create_hybrid_graph(test_data, test_coords, feature_weights=feature_weights)
+    '''
 
     train_loader = DataLoader([train_graph], batch_size=8, shuffle=True)
     val_loader = DataLoader([val_graph], batch_size=8, shuffle=False)
     test_loader = DataLoader([test_graph], batch_size=8, shuffle=False)
-
+    
     num_features = train_graph.x.shape[1]
 
     model = GNNClassifier(input_dim=num_features, hidden_dim=64, output_dim=1)
@@ -97,8 +104,9 @@ def run(df: pd.DataFrame, coords: pd.DataFrame, patience: int = 10) -> None:
         patience=patience,
     )
 
-    test_loss, test_accuracy, test_precision, test_recall, test_f1 = evaluate(test_loader, model, criterion, threshold=0.5)
-    logger.info(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Precision: {test_precision:.4f}, Recall: {test_recall:.4f}, F1-Score: {test_f1:.4f}")
+    test_loss, test_accuracy, test_balanced_accuracy, test_precision, test_recall, test_f1 = evaluate(test_loader, model, criterion, threshold=0.55)
+    logger.info(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Test Balanced Accuracy: {test_balanced_accuracy:.4f}")
+    logger.info(f"Precision: {test_precision:.4f}, Recall: {test_recall:.4f}, F1-Score: {test_f1:.4f}")
 
 
 def main(tiff_folder: str, geojson_folder: str, output_folder: str) -> None:
@@ -122,10 +130,12 @@ def main(tiff_folder: str, geojson_folder: str, output_folder: str) -> None:
     numeric_features = X.columns.difference(categorical_features)
 
     X = fill_missing_values(X, categorical_features)
-    X_transformed = pd.DataFrame(transform_features(X, categorical_features, numeric_features))
+    
+    X_transformed = transform_features(X, categorical_features, numeric_features)
 
-    important_features = get_importance(X_transformed, df_features["event_type"])
-    df_transformed = pd.concat([X_transformed[important_features], df_features["event_type"]], axis=1)
+    #important_features, _ = get_importance(X_transformed, df_features["event_type"])
+    #df_transformed = pd.concat([X_transformed[important_features], df_features["event_type"]], axis=1)
+    df_transformed = pd.concat([X_transformed, df_features["event_type"]], axis=1)
 
     run(df_transformed, coords)
 

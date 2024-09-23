@@ -75,11 +75,10 @@ def run(df: pd.DataFrame, coords: pd.DataFrame, feature_weights: list = None, pa
     train_graph = create_radius_graph(train_data)
     val_graph = create_radius_graph(val_data)
     test_graph = create_radius_graph(test_data)
-    '''
-    train_graph = create_hybrid_graph(train_data, train_coords, feature_weights=feature_weights)
-    val_graph = create_hybrid_graph(val_data, val_coords, feature_weights=feature_weights)
-    test_graph = create_hybrid_graph(test_data, test_coords, feature_weights=feature_weights)
-    '''
+    
+    #train_graph = create_hybrid_graph(train_data, train_coords, feature_weights=feature_weights)
+    #val_graph = create_hybrid_graph(val_data, val_coords, feature_weights=feature_weights)
+    #test_graph = create_hybrid_graph(test_data, test_coords, feature_weights=feature_weights)
 
     train_loader = DataLoader([train_graph], batch_size=8, shuffle=True)
     val_loader = DataLoader([val_graph], batch_size=8, shuffle=False)
@@ -109,7 +108,7 @@ def run(df: pd.DataFrame, coords: pd.DataFrame, feature_weights: list = None, pa
     logger.info(f"Precision: {test_precision:.4f}, Recall: {test_recall:.4f}, F1-Score: {test_f1:.4f}")
 
 
-def main(tiff_folder: str, geojson_folder: str, output_folder: str) -> None:
+def main(data_folder: str, output_folder: str) -> None:
     filenames = {
         "area": "area",
         "climate": "climate",
@@ -118,45 +117,45 @@ def main(tiff_folder: str, geojson_folder: str, output_folder: str) -> None:
         "ndvi": "ndvi",
     }
 
-    df = get_coords(os.path.join(output_folder, "area.csv"), geojson_folder)
-    coords = df[["x", "y"]]
+    df = get_coords(os.path.join(output_folder, "area.csv"), data_folder)
+    coords_df = df[["x", "y"]]
+    years = df[["year"]]
 
-    dataframes = get_feature_data(tiff_folder, geojson_folder, output_folder, filenames, coords)
+    dataframes = get_feature_data(data_folder, output_folder, filenames, coords_df, years)
     df_features = merge_features(dataframes)
     df_features = map_categorical_values(df_features)
 
-    X = prepare_features(df_features)
+    X, coords, y = prepare_features(df_features)
+
     categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
     numeric_features = X.columns.difference(categorical_features)
 
     X = fill_missing_values(X, categorical_features)
-    
+
     X_transformed = transform_features(X, categorical_features, numeric_features)
 
-    #important_features, _ = get_importance(X_transformed, df_features["event_type"])
-    #df_transformed = pd.concat([X_transformed[important_features], df_features["event_type"]], axis=1)
-    df_transformed = pd.concat([X_transformed, df_features["event_type"]], axis=1)
+    important_features, _ = get_importance(X_transformed, y)
+    df_transformed = pd.concat([X_transformed[important_features], y], axis=1)
+    #df_transformed = pd.concat([X_transformed, y], axis=1)
 
     run(df_transformed, coords)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tree Event Classifier.")
-    parser.add_argument("--tiff-folder", type=str, required=True, help="Path to the folder containing TIFF files.",)
-    parser.add_argument("--geojson-folder", type=str, required=True, help="Path to the folder containing GeoJSON files.",)
+    parser.add_argument("--data-folder", type=str, required=True, help="Path to the folder containing TIFF and Geojsons files.",)
     parser.add_argument("--output-folder", type=str, required=True, help="Path to the output folder.")
 
     args = parser.parse_args()
 
-    main(args.tiff_folder, args.geojson_folder, args.output_folder)
+    main(args.data_folder, args.output_folder)
 
 
 """
 Usage:
 
 python -m treeevent.main \
-    --tiff-folder /Users/anisr/Documents/AerialImages/4band_25cm/ \
-    --geojson-folder /Users/anisr/Documents/AerialImages/Geojsons/ \
+    --data-folder /Users/anisr/Documents/dead_trees/Finland/RGBNIR/25cm \
     --output-folder ./output
 
 """

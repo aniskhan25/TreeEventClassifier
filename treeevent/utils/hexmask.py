@@ -17,9 +17,7 @@ def get_hexcodes(coords, sz_cell = (65000.0 / 2)):
 
 
 def get_masks(coords, train_size=0.7):
-
     coords_with_hexcodes = get_hexcodes(coords)
-
 
     n = len(coords_with_hexcodes)
     indices = np.arange(n)

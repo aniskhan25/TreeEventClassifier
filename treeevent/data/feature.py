@@ -34,7 +34,7 @@ def get_coords(file_path, geojson_folder):
     return df
 
 
-def get_feature(file_path, tiff_folder, geojson_folder, coords=None, type="area"):
+def get_feature(file_path, data_folder, coords=None, years=None, type="area"):
     if os.path.exists(file_path):
         logger.info(f"File found: {file_path}. Loading the CSV file.")
         df = pd.read_csv(file_path)
@@ -42,15 +42,15 @@ def get_feature(file_path, tiff_folder, geojson_folder, coords=None, type="area"
         logger.info(f"File not found: {file_path}. Generating new data.")
 
         if type == "area":
-            df = process_geojson_folder(geojson_folder)
+            df = process_geojson_folder(data_folder)
         elif type == "climate":
-            df = fetch_climate_data_parallel(coords, num_workers=8)
+            df = fetch_climate_data_parallel(coords, years, num_workers=8)
         elif type == "clusters":
             df = find_clusters(coords, eps=20, min_samples=3)
         elif type == "elevation":
             df = get_elevations(coords, batch_size=5)
         elif type == "ndvi":
-            df = get_vegetation_data(tiff_folder, geojson_folder)
+            df = get_vegetation_data(data_folder)
         else:
             pass
 
@@ -59,11 +59,11 @@ def get_feature(file_path, tiff_folder, geojson_folder, coords=None, type="area"
     return df
 
 
-def get_feature_data(tiff_folder, geojson_folder, output_folder, filenames, coords):
+def get_feature_data(data_folder, output_folder, filenames, coords, years):
     dataframes = {}
 
     for name, ftype in filenames.items():
-        df = get_feature(os.path.join(output_folder, name + ".csv"), tiff_folder, geojson_folder, coords=coords, type=ftype)
+        df = get_feature(os.path.join(output_folder, name + ".csv"), data_folder, coords=coords, years=years, type=ftype)
         df[["x", "y"]] = df[["x", "y"]].astype(int)
         dataframes[ftype] = df
 
@@ -88,15 +88,20 @@ def map_categorical_values(df):
 
 
 def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
-    X = df.drop(columns=["x", "y", "event_type", "cluster"])
-    
+    X = df.copy().dropna()
+    X = X.reset_index(drop=True)
+
     X = calculate_climate_stats(X)
     X = add_age_interaction_terms(X)
     X = calculate_interactions(X)
     X = calculate_other_measures(X)
     X = add_ndvi_features(X)
-    
-    return X
+
+    X_coords = X[['x','y']]
+    y = X['event_type']
+    X = X.drop(columns=["x", "y", "event_type", "cluster"])
+
+    return X, X_coords, y
 
 
 def calculate_climate_stats(X):
@@ -163,9 +168,21 @@ def calculate_climate_stats(X):
     
     X['dry_months'] = (X[[f'Prcp_month_{i+1}' for i in range(len(days_in_month))]] < 10).sum(axis=1)
 
-    X['wettest_month'] = X[[f'Prcp_month_{i+1}' for i in range(len(days_in_month))]].idxmax(axis=1)
-    X['driest_month'] = X[[f'Prcp_month_{i+1}' for i in range(len(days_in_month))]].idxmin(axis=1)
+    X['wettest_month'] = X[prcp_cols].idxmax(axis=1, skipna=True).apply(lambda col: int(col.split('_')[-1]))
+    X['driest_month'] = X[prcp_cols].idxmin(axis=1, skipna=True).apply(lambda col: int(col.split('_')[-1]))
 
+    columns = [f'Prcp_month_{i+1}' for i in range(len(days_in_month))]
+
+    def extract_month(col_name):
+        try:
+            month_num = int(col_name.split('_')[-1])
+            return month_num
+        except ValueError:
+            return np.nan
+
+    X['wettest_month'] = X[columns].idxmax(axis=1, skipna=True).apply(extract_month)
+    X['driest_month'] = X[columns].idxmin(axis=1, skipna=True).apply(extract_month)
+    
     climate_vars = ["Prcp", "Tmax", "Tmin"]
     for climate_var in climate_vars:
         X[f'{climate_var}_winter'] = X[[f'{climate_var}_month_12', f'{climate_var}_month_1', f'{climate_var}_month_2']].sum(axis=1)
@@ -296,7 +313,10 @@ def transform_features(X, categorical_features, numeric_features):
     X_transformed = preprocessor.fit_transform(X)
 
     numeric_columns = numeric_features
-    categorical_columns = preprocessor.named_transformers_['cat'].get_feature_names_out(categorical_features)
+    if categorical_features != []:
+        categorical_columns = preprocessor.named_transformers_['cat'].get_feature_names_out(categorical_features)
+    else:
+        categorical_columns = []
 
     X_transformed = pd.DataFrame(X_transformed, columns=list(numeric_columns)+list(categorical_columns), index=X.index)
     return X_transformed

@@ -107,17 +107,19 @@ def process_tiff_geojson(tiff_file, geojson_file, buffer_radius=3):
         return pd.DataFrame(results)
 
 
-def get_vegetation_data(tiff_folder, geojson_folder, buffer_radius=3):
-    tiff_files = {
-        os.path.splitext(f)[0]: os.path.join(tiff_folder, f)
-        for f in os.listdir(tiff_folder)
-        if f.endswith(".tif") or f.endswith(".tiff")
-    }
-    geojson_files = {
-        os.path.splitext(f)[0]: os.path.join(geojson_folder, f)
-        for f in os.listdir(geojson_folder)
-        if f.endswith(".geojson")
-    }
+def get_vegetation_data(data_folder, buffer_radius=3):
+    tiff_files = {}
+    geojson_files = {}
+
+    for root, dirs, files in os.walk(data_folder):
+        for f in files:
+            file_stem, file_ext = os.path.splitext(f)
+
+            if file_ext.lower() in [".tif", ".tiff"]:
+                tiff_files[file_stem] = os.path.join(root, f)
+
+            elif file_ext.lower() == ".geojson":
+                geojson_files[file_stem] = os.path.join(root, f)
 
     all_results = pd.DataFrame(
         columns=["x", "y", "NDVI", "NDVI_mean", "NDVI_variance", "NDVI_max", "NDVI_min"]
